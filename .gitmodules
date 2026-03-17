@@ -1,3 +1,6 @@
-[submodule "third_party/agentsight-bpf"]
-	path = third_party/agentsight-bpf
-	url = https://github.com/eunomia-bpf/agentsight.git
+[submodule "third_party/libbpf"]
+	path = third_party/libbpf
+	url = https://github.com/libbpf/libbpf.git
+[submodule "third_party/bpftool"]
+	path = third_party/bpftool
+	url = https://github.com/libbpf/bpftool.git

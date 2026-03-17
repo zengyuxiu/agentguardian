@@ -1,4 +1,4 @@
-module github.com/eunomia-bpf/cilium-ebpf-starter-template
+module github.com/zengyuxiu/agentguardian
 
 go 1.26
 

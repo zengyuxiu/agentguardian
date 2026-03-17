@@ -1,2 +1,6 @@
 .direnv
 bin
+example
+doc
+third-party
+.idea
