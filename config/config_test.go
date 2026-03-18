@@ -58,6 +58,17 @@ func TestRewriteRequested(t *testing.T) {
 	}
 }
 
+func TestParseFlagsRulesPath(t *testing.T) {
+	cfg, err := ParseFlags([]string{"-rules", "/etc/agentguardian/rules.d"}, 1234)
+	if err != nil {
+		t.Fatalf("ParseFlags() error = %v", err)
+	}
+
+	if cfg.RulesPath != "/etc/agentguardian/rules.d" {
+		t.Fatalf("ParseFlags() rules path = %q, want %q", cfg.RulesPath, "/etc/agentguardian/rules.d")
+	}
+}
+
 func TestShouldApplyRewritePID(t *testing.T) {
 	tests := []struct {
 		name string
