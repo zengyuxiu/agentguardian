@@ -1,121 +1,318 @@
-# **cilium-ebpf-starter-template**
+# AgentGuardian
 
-![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
-[![Build and publish](https://github.com/eunomia-bpf/cilium-ebpf-starter-template/actions/workflows/publish.yml/badge.svg)](https://github.com/eunomia-bpf/cilium-ebpf-starter-template/actions/workflows/publish.yml)
-![GitHub stars](https://img.shields.io/github/stars/eunomia-bpf/cilium-ebpf-starter-template?style=social)
+`AgentGuardian` 是一个基于 eBPF 的文件访问防护工具。
 
-Welcome to the **`cilium-ebpf-starter-template`**! This project template is designed to help you quickly start
-developing eBPF projects using cilium in Go. The template provides a solid starting point with a Makefile, 
-Dockerfile, and GitHub action, along with all necessary dependencies to simplify your development process.
+它当前提供两类能力：
 
-Also, this is a minimal cilium ebpf project, you can read the code to understand how to write ebpf programs using cilium ebpf.
+- `hide`: 对指定进程隐藏目标文件，效果类似返回 `ENOENT`
+- `rewrite`: 在指定进程读取目标文件时，按固定字符串规则改写读取结果
 
-借助于 GitHub 模板和 Github Codespace，可以轻松构建 eBPF 项目和开发环境，一键在线编译运行 eBPF 程序。关于中文的文档和详细的 eBPF 开发教程，可以参考：https://github.com/eunomia-bpf/bpf-developer-tutorial
+项目使用 Go + `cilium/ebpf`，BPF 代码位于内核态，控制逻辑位于用户态。
 
-There are other templates for other languages:
+## 适用场景
 
-- [libbpf-starter-template](https://github.com/eunomia-bpf/libbpf-starter-template): eBPF project template based on the C language and the libbpf framework.
-- [libbpf-rs-starter-template](https://github.com/eunomia-bpf/libbpf-rs-starter-template): eBPF project template based on the Rust language and the libbpf-rs framework.
-- [eunomia-template>](https://github.com/eunomia-bpf/eunomia-template): eBPF project template based on the C language and the eunomia-bpf framework.
+- 阻止指定 AI Agent 或工具读取敏感文件
+- 为特定进程返回蜜罐内容或脱敏内容
+- 验证“按进程而非线程”跟踪文件描述符的 eBPF 行为
 
-## **Getting Started**
+## 当前能力范围
 
-To get started, simply click the "Use this template" button on the GitHub repository page. This will create
-a new repository in your account with the same files and structure as this template.
+- 拦截 `openat/openat2/read/close`
+- 支持按 `pid`、进程名 `comm`、可执行文件路径 `exe` 下发策略
+- `rewrite` 按进程粒度跟踪 `fd`
+- `hide` 依赖 `lsm/file_open`
 
-### Use docker
+限制：
 
-Run the following code to run the eBPF code from the cloud to your local machine in one line:
+- `rewrite` 目前只处理 `read(2)` 路径
+- `rewrite` 只支持等长替换：`-find` 与 `-replace` 长度必须一致
+- `hide-exe` / `rewrite-exe` 通过扫描 `/proc` 同步 PID，短生命周期进程可能有竞态
 
-```console
-$ sudo docker run --rm -it --privileged ghcr.io/eunomia-bpf/cilium-template:latest
-2023/03/25 08:10:17 Waiting for events..
-2023/03/25 08:10:18 pid: 7564   comm: .waybar-wrapped
-2023/03/25 08:10:18 pid: 7564   comm: sh
-2023/03/25 08:10:20 pid: 7574   comm: grimshot
-2023/03/25 08:10:20 pid: 7576   comm: .grimshot-wrapp
-2023/03/25 08:10:20 pid: 7577   comm: .grimshot-wrapp
-2023/03/25 08:10:21 pid: 7580   comm: Xwayland
+## 环境要求
+
+- Linux
+- root 权限，或无密码 `sudo`
+- 建议内核 `>= 5.10`
+- 系统提供 `/sys/kernel/btf/vmlinux`
+- 已安装 `clang`、Go、构建 eBPF 所需基础工具
+
+## 构建
+
+```bash
+make
 ```
 
-### Use Nix
+产物：
 
-Using [direnv](https://github.com/direnv/direnv) and nix, you can quickly access a dev shell with a complete development environment.
+- 可执行文件：
+  - `bin/agentguardian`
+  - `bin/agentguardd`
+  - `bin/agctl`
 
-With direnv, you can automatically load the required dependencies when you enter the directory.
-This way you don't have to worry about installing dependencies to break your other project development environment.
+常用命令：
 
-See how to install direnv and Nix:
-- direnv: https://github.com/direnv/direnv/blob/master/docs/installation.md
-- Nix: run
-```
-sh <(curl -L https://nixos.org/nix/install) --daemon
-```
-
-Then use the following command to enable direnv support in this directory.
-
-```sh
-direnv allow
+```bash
+make test
+make integration-test
 ```
 
-If you want use nix flake without direnv, simply run:
+## 快速开始
 
-```sh
-nix develop
+### 1. 按进程隐藏文件
+
+```bash
+sudo ./bin/agentguardian \
+  -hide-exe /opt/claude-code/bin/claude \
+  -path /tmp/replacetest
 ```
 
-## **Features**
+如果当前内核不支持 `lsm/file_open`，程序会启动，但日志会提示 `hide action disabled`。
 
-This starter template includes the following features:
+### 2. 按进程改写读取内容
 
-- A **`Makefile`** that allows you to build the project in one command
-- A **`Dockerfile`** to create a containerized environment for your project
-- A **`flake.nix`** to enter a develop shell
-- A GitHub action to automate your build and publish process
-- All necessary dependencies for Go development with ebpf
+```bash
+printf 'secret-token\n' > /tmp/ag-test.txt
 
-## **How to use**
-
-### **1. Create a new repository using this template**
-
-Click the "Use this template" button on the GitHub repository page to create a new repository based on this template.
-
-### **2. Clone your new repository**
-
-Clone your newly created repository to your local machine:
-
-```
-git clone https://github.com/your_username/your_new_repository.git
+sudo ./bin/agentguardian \
+  -path /tmp/ag-test.txt \
+  -rewrite-exe /usr/bin/cat \
+  -find secret \
+  -replace public
 ```
 
-### **3. Install dependencies**
+然后执行：
 
-For dependencies, it varies from distribution to distribution.
-You can refer to dockerfile for installation.
-
-### **4. Build the project**
-
-To build the project, run the following command:
-
-```
-make build
+```bash
+cat /tmp/ag-test.txt
 ```
 
-This will compile your code and create the necessary binaries.
+预期输出：
 
-### **7. GitHub Actions**
+```text
+public-token
+```
 
-This template includes two GitHub actions:
+### 3. 默认改写自身进程
 
-When you push to the repository, it automatically builds and publishes your project and publishes the docker image.
+如果只传 `-find/-replace`，没有显式指定任何 `rewrite-*` 目标，程序会默认对自身 PID 下发 rewrite 策略。
 
-To customize this action, edit the **`.github/workflows/publish.yml`** file.
+### 4. 从 YAML 规则集启动
 
-## **Contributing**
+单文件 ruleset：
 
-We welcome contributions to improve this template! If you have any ideas or suggestions,
-feel free to create an issue or submit a pull request.
+```bash
+sudo ./bin/agentguardian -rules ./rules.yaml
+```
 
-## **License**
+目录式 ruleset：
 
-This project is licensed under the MIT License. See the **[LICENSE](LICENSE)** file for more information.
+```bash
+sudo ./bin/agentguardian -rules /etc/agentguardian/rules.d
+```
+
+示例：
+
+```yaml
+version: 1
+rules:
+  - id: hide-claude-passwd
+    match:
+      path: /etc/passwd
+      exe: /opt/claude-code/bin/claude
+    action:
+      type: hide
+
+  - id: rewrite-cat-token
+    match:
+      path: /tmp/ag-test.txt
+      comm: cat
+    action:
+      type: rewrite
+      find: secret
+      replace: public
+```
+
+说明：
+
+- `-rules` 可以指向单个 YAML 文件，或一个 `rules.d` 目录
+- 目录加载时按文件名字典序合并
+- 当前规则模型要求每条规则只设置一个 selector：`pid`、`comm`、`exe` 三选一
+
+## 守护进程模式
+
+除了原有的单进程 CLI 模式，现在也支持 `agentguardd + agctl` 控制面。
+
+### 1. 目录约定
+
+```text
+/etc/agentguardian/
+  rules.d/
+    010-hide-claude-passwd.yaml
+    100-rewrite-cat-token.yaml
+```
+
+### 2. 启动 daemon
+
+```bash
+sudo ./bin/agentguardd \
+  -config-dir /etc/agentguardian \
+  -socket /run/agentguardian/agentguardd.sock
+```
+
+### 3. 查询状态
+
+```bash
+./bin/agctl -socket /run/agentguardian/agentguardd.sock status
+```
+
+### 4. 校验规则
+
+校验 permanent：
+
+```bash
+./bin/agctl -socket /run/agentguardian/agentguardd.sock validate -scope permanent
+```
+
+校验 runtime：
+
+```bash
+./bin/agctl -socket /run/agentguardian/agentguardd.sock validate -scope runtime
+```
+
+### 5. 从 permanent 重载到 runtime
+
+```bash
+./bin/agctl -socket /run/agentguardian/agentguardd.sock reload
+```
+
+## Runtime / Permanent
+
+当前控制面已经区分两套状态：
+
+- `permanent`
+  - 磁盘上的 `rules.d`
+  - 是 daemon 重启后的恢复来源
+- `runtime`
+  - daemon 内存里当前已编译并下发到 BPF maps 的规则快照
+
+当前支持的控制动作：
+
+- `status`
+- `validate`
+- `reload`
+
+当前还不支持：
+
+- `save`
+- `apply --runtime`
+- runtime override 持久化
+
+也就是说，目前 `reload` 的语义是：
+
+- 重新读取 `rules.d`
+- 编译为当前 `policy_map` / `comm_policy_map`
+- 用 permanent 覆盖当前 runtime
+
+## 参数说明
+
+基础参数：
+
+- `-rules`: YAML 规则文件或 `rules.d` 目录
+- `-path`: 目标文件路径
+- `-find`: 要匹配的字符串
+- `-replace`: 替换字符串
+- `-rewrite`: `-replace` 的兼容别名
+
+按 PID：
+
+- `-rewrite-pid`
+- `-hide-pid`
+
+按进程名：
+
+- `-rewrite-comm`
+- `-hide-comm`
+
+按可执行文件：
+
+- `-rewrite-exe`
+- `-hide-exe`
+
+说明：
+
+- `-rewrite-*` 只有在实际启用 rewrite 时才要求 `-find/-replace`
+- 纯 `hide-*` 场景不需要 `-find/-replace`
+- `comm` 参数支持逗号分隔，例如 `cat,less`
+- `exe` 参数支持逗号分隔，例如 `/usr/bin/cat,/usr/bin/node`
+
+## 日志示例
+
+启动日志：
+
+```text
+AgentGuardian active: path="/tmp/ag-test.txt" rewrite-pid=0 hide-pid=0 rewrite-comm="" hide-comm="" rewrite-exe="/usr/bin/cat" hide-exe="" find="secret" replace="public"
+```
+
+YAML 模式启动日志：
+
+```text
+AgentGuardian active: rules="/etc/agentguardian/rules.d" version=1 rule-count=2 pid-policies=1 comm-policies=1
+```
+
+事件日志：
+
+```text
+op=open action=rewrite pid=123 tid=124 ret=0 comm=cat path=/tmp/ag-test.txt
+op=rewrite action=rewrite pid=123 tid=124 ret=6 comm=cat path=/tmp/ag-test.txt
+op=block action=hide pid=456 tid=456 ret=-2 comm=claude path=/tmp/replacetest
+```
+
+字段含义：
+
+- `op=open`: 命中目标文件打开
+- `op=rewrite`: 实际发生内容改写
+- `op=block`: 实际发生隐藏/阻断
+
+## 测试
+
+普通测试：
+
+```bash
+go test ./...
+```
+
+集成测试：
+
+```bash
+go test -tags=integration ./cmd/agentguardian -v
+```
+
+集成测试覆盖：
+
+- 跨线程 `open` + `read` 的 rewrite
+- `hide-exe` 阻断
+- 非目标路径不改写
+
+## 代码结构
+
+```text
+cmd/agentguardian/     CLI 入口和集成测试
+cmd/agentguardd/       守护进程入口
+cmd/agctl/             Unix socket 控制客户端
+config/                参数解析与策略同步
+internal/control/      runtime/permanent 控制面
+internal/rules/        规则模型、YAML、校验、编译
+internal/ebpf/         BPF 源码、bpf2go 生成物、运行时封装
+example/               参考实现
+doc/                   背景文档和开发记录
+```
+
+## 注意事项
+
+- `bpf_probe_write_user` 属于高风险能力，只建议在受控环境中使用
+- `hide` 功能依赖内核 LSM 支持，不是所有发行版默认可用
+- 如果 `make` 因 `.o` 文件权限失败，通常是之前用 `sudo` 生成过对象文件，修正文件属主后再构建即可
+
+## License
+
+见 [LICENSE](LICENSE)。
