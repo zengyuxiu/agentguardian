@@ -3,6 +3,7 @@ package config
 import "flag"
 
 type Config struct {
+	RulesPath          string
 	TargetPath         string
 	RewritePID         uint
 	HidePID            uint
@@ -19,6 +20,7 @@ func ParseFlags(args []string, selfPID uint) (Config, error) {
 	cfg := Config{}
 	fs := flag.NewFlagSet("agentguardian", flag.ContinueOnError)
 
+	fs.StringVar(&cfg.RulesPath, "rules", "", "path to a YAML rules file or a rules.d directory")
 	fs.StringVar(&cfg.TargetPath, "path", "/etc/passwd", "sensitive path to watch")
 	fs.UintVar(&cfg.RewritePID, "rewrite-pid", selfPID, "pid to receive rewritten content")
 	fs.UintVar(&cfg.HidePID, "hide-pid", 0, "pid to deny access with ENOENT")
