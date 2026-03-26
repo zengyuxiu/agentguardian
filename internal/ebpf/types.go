@@ -8,6 +8,10 @@ const (
 	OpOpen    = 1
 	OpBlock   = 2
 	OpRewrite = 3
+
+	MaxPathLen = 64
+	MaxTextLen = 64
+	MaxCommLen = 16
 )
 
 type Event = agentguardianEvent

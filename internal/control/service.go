@@ -28,6 +28,7 @@ type Service struct {
 	runtimeLoaded   bool
 	runtimeUpdated  time.Time
 	runtimeError    string
+	runtimeWarnings []string
 	generation      uint64
 
 	syncRevision uint64
@@ -124,11 +125,8 @@ func (s *Service) Reload() (ReloadResponse, error) {
 		}, err
 	}
 
-	if err := s.applier.ApplyCompiled(compiled); err != nil {
-		s.mu.Lock()
-		s.runtimeError = err.Error()
-		s.mu.Unlock()
-
+	runtimeState, err := s.applyRuntime(permanentRuleset, compiled, permanentState.Warnings)
+	if err != nil {
 		return ReloadResponse{
 			Message:   "reload failed",
 			Runtime:   s.runtimeState(),
@@ -136,23 +134,41 @@ func (s *Service) Reload() (ReloadResponse, error) {
 		}, err
 	}
 
-	now := time.Now()
-
-	s.mu.Lock()
-	s.runtimeRuleset = permanentRuleset
-	s.runtimeCompiled = compiled
-	s.runtimeLoaded = true
-	s.runtimeUpdated = now
-	s.runtimeError = ""
-	s.generation++
-	runtimeState := s.runtimeStateLocked()
-	s.restartSyncLocked(permanentRuleset)
-	s.mu.Unlock()
-
 	return ReloadResponse{
 		Message:   "reload applied permanent ruleset to runtime",
 		Runtime:   runtimeState,
 		Permanent: permanentState,
+	}, nil
+}
+
+func (s *Service) ApplyRuntime(rs rules.Ruleset) (ApplyResponse, error) {
+	rs = rs.Normalized()
+
+	compiled, report, err := rules.CompileWithReport(rs, rules.CompileOptions{})
+	if err != nil {
+		return ApplyResponse{
+			Scope:     ScopeRuntime,
+			Message:   "apply failed",
+			Runtime:   s.runtimeState(),
+			Permanent: s.inspectPermanent(),
+		}, err
+	}
+
+	runtimeState, err := s.applyRuntime(rs, compiled, report.Warnings)
+	if err != nil {
+		return ApplyResponse{
+			Scope:     ScopeRuntime,
+			Message:   "apply failed",
+			Runtime:   s.runtimeState(),
+			Permanent: s.inspectPermanent(),
+		}, err
+	}
+
+	return ApplyResponse{
+		Scope:     ScopeRuntime,
+		Message:   "runtime ruleset applied",
+		Runtime:   runtimeState,
+		Permanent: s.inspectPermanent(),
 	}, nil
 }
 
@@ -173,7 +189,7 @@ func (s *Service) loadAndCompilePermanent() (rules.Ruleset, rules.Compiled, Rule
 		return rules.Ruleset{}, rules.Compiled{}, state, err
 	}
 
-	compiled, err := rules.Compile(rs, rules.CompileOptions{})
+	compiled, report, err := rules.CompileWithReport(rs, rules.CompileOptions{})
 	state.Loaded = true
 	state.Valid = err == nil
 	state.Version = rs.Version
@@ -181,6 +197,7 @@ func (s *Service) loadAndCompilePermanent() (rules.Ruleset, rules.Compiled, Rule
 	state.PIDPolicyCount = len(compiled.PIDPolicies)
 	state.CommPolicyCount = len(compiled.CommPolicies)
 	state.RequiresProcessSync = rules.NeedsProcessScan(rs)
+	state.Warnings = report.Warnings
 	if err != nil {
 		state.Error = err.Error()
 		return rs, rules.Compiled{}, state, err
@@ -215,6 +232,7 @@ func (s *Service) runtimeStateLocked() RulesetState {
 	state.PIDPolicyCount = len(s.runtimeCompiled.PIDPolicies)
 	state.CommPolicyCount = len(s.runtimeCompiled.CommPolicies)
 	state.RequiresProcessSync = rules.NeedsProcessScan(s.runtimeRuleset)
+	state.Warnings = s.runtimeWarnings
 	state.Generation = s.generation
 	state.UpdatedAt = s.runtimeUpdated
 	state.Error = s.runtimeError
@@ -251,7 +269,7 @@ func (s *Service) syncLoop(ctx context.Context, revision uint64, rs rules.Rulese
 		case <-ticker.C:
 		}
 
-		compiled, err := rules.Compile(rs, rules.CompileOptions{})
+		compiled, report, err := rules.CompileWithReport(rs, rules.CompileOptions{})
 		if err != nil {
 			s.setRuntimeError(err)
 			continue
@@ -278,6 +296,7 @@ func (s *Service) syncLoop(ctx context.Context, revision uint64, rs rules.Rulese
 		s.runtimeCompiled = compiled
 		s.runtimeUpdated = time.Now()
 		s.runtimeError = ""
+		s.runtimeWarnings = report.Warnings
 		s.generation++
 		s.mu.Unlock()
 	}
@@ -291,6 +310,31 @@ func (s *Service) setRuntimeError(err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.runtimeError = err.Error()
+}
+
+func (s *Service) applyRuntime(rs rules.Ruleset, compiled rules.Compiled, warnings []string) (RulesetState, error) {
+	if err := s.applier.ApplyCompiled(compiled); err != nil {
+		s.mu.Lock()
+		s.runtimeError = err.Error()
+		s.mu.Unlock()
+		return RulesetState{}, err
+	}
+
+	now := time.Now()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.runtimeRuleset = rs
+	s.runtimeCompiled = compiled
+	s.runtimeLoaded = true
+	s.runtimeUpdated = now
+	s.runtimeError = ""
+	s.runtimeWarnings = append([]string{}, warnings...)
+	s.generation++
+	s.restartSyncLocked(rs)
+
+	return s.runtimeStateLocked(), nil
 }
 
 func compiledEqual(a, b rules.Compiled) bool {

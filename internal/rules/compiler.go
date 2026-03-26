@@ -27,6 +27,10 @@ type Compiled struct {
 	CommPolicies map[agentebpf.CommKey]agentebpf.Policy
 }
 
+type CompileReport struct {
+	Warnings []string
+}
+
 type compiledCandidate struct {
 	policy      agentebpf.Policy
 	rule        Rule
@@ -40,9 +44,15 @@ const (
 )
 
 func Compile(rs Ruleset, opts CompileOptions) (Compiled, error) {
+	compiled, _, err := CompileWithReport(rs, opts)
+	return compiled, err
+}
+
+func CompileWithReport(rs Ruleset, opts CompileOptions) (Compiled, CompileReport, error) {
 	rs = rs.Normalized()
-	if err := ValidateRuleset(rs); err != nil {
-		return Compiled{}, err
+	validationReport, err := ValidateRulesetReport(rs)
+	if err != nil {
+		return Compiled{}, CompileReport{Warnings: validationReport.Warnings}, err
 	}
 
 	processes := opts.Processes
@@ -50,13 +60,16 @@ func Compile(rs Ruleset, opts CompileOptions) (Compiled, error) {
 		var err error
 		processes, err = listProcessesFromProc()
 		if err != nil {
-			return Compiled{}, fmt.Errorf("list processes: %w", err)
+			return Compiled{}, CompileReport{Warnings: validationReport.Warnings}, fmt.Errorf("list processes: %w", err)
 		}
 	}
 
 	out := Compiled{
 		PIDPolicies:  make(map[uint32]agentebpf.Policy),
 		CommPolicies: make(map[agentebpf.CommKey]agentebpf.Policy),
+	}
+	report := CompileReport{
+		Warnings: append([]string{}, validationReport.Warnings...),
 	}
 
 	pidCandidates := make(map[uint32]compiledCandidate)
@@ -68,7 +81,7 @@ func Compile(rs Ruleset, opts CompileOptions) (Compiled, error) {
 
 		policy, err := buildPolicy(rule)
 		if err != nil {
-			return Compiled{}, err
+			return Compiled{}, report, err
 		}
 
 		switch {
@@ -80,7 +93,12 @@ func Compile(rs Ruleset, opts CompileOptions) (Compiled, error) {
 				specificity: selectorPID,
 			}
 			if current, ok := pidCandidates[pid]; !ok || shouldReplace(current, candidate) {
+				if ok {
+					report.Warnings = append(report.Warnings, describeReplacementWarning(current.rule, candidate.rule, fmt.Sprintf("pid %d", pid)))
+				}
 				pidCandidates[pid] = candidate
+			} else {
+				report.Warnings = append(report.Warnings, describeReplacementWarning(candidate.rule, current.rule, fmt.Sprintf("pid %d", pid)))
 			}
 		case rule.Match.Comm != "":
 			key := agentebpf.NewCommKey(rule.Match.Comm)
@@ -90,7 +108,12 @@ func Compile(rs Ruleset, opts CompileOptions) (Compiled, error) {
 				specificity: selectorComm,
 			}
 			if current, ok := commCandidates[key]; !ok || shouldReplace(current, candidate) {
+				if ok {
+					report.Warnings = append(report.Warnings, describeReplacementWarning(current.rule, candidate.rule, fmt.Sprintf("comm %q", rule.Match.Comm)))
+				}
 				commCandidates[key] = candidate
+			} else {
+				report.Warnings = append(report.Warnings, describeReplacementWarning(candidate.rule, current.rule, fmt.Sprintf("comm %q", rule.Match.Comm)))
 			}
 		case rule.Match.Exe != "":
 			targetExe := canonicalizePath(rule.Match.Exe)
@@ -99,16 +122,26 @@ func Compile(rs Ruleset, opts CompileOptions) (Compiled, error) {
 				rule:        rule,
 				specificity: selectorExe,
 			}
+			matched := 0
 			for _, process := range processes {
 				if canonicalizePath(process.Exe) != targetExe {
 					continue
 				}
+				matched++
 				if current, ok := pidCandidates[process.PID]; !ok || shouldReplace(current, candidate) {
+					if ok {
+						report.Warnings = append(report.Warnings, describeReplacementWarning(current.rule, candidate.rule, fmt.Sprintf("pid %d from exe %q", process.PID, rule.Match.Exe)))
+					}
 					pidCandidates[process.PID] = candidate
+				} else {
+					report.Warnings = append(report.Warnings, describeReplacementWarning(candidate.rule, current.rule, fmt.Sprintf("pid %d from exe %q", process.PID, rule.Match.Exe)))
 				}
 			}
+			if matched == 0 {
+				report.Warnings = append(report.Warnings, fmt.Sprintf("rule %q: match.exe %q matched no running processes during compilation", rule.ID, rule.Match.Exe))
+			}
 		default:
-			return Compiled{}, fmt.Errorf("rule %q: compiler found no selector", rule.ID)
+			return Compiled{}, report, fmt.Errorf("rule %q: compiler found no selector", rule.ID)
 		}
 	}
 
@@ -119,7 +152,8 @@ func Compile(rs Ruleset, opts CompileOptions) (Compiled, error) {
 		out.CommPolicies[key] = candidate.policy
 	}
 
-	return out, nil
+	report.Warnings = dedupeStrings(report.Warnings)
+	return out, report, nil
 }
 
 func ApplyCompiled(policyMap, commPolicyMap *cebpf.Map, compiled Compiled) error {
@@ -301,4 +335,8 @@ func canonicalizePath(path string) string {
 		return resolved
 	}
 	return path
+}
+
+func describeReplacementWarning(discarded Rule, kept Rule, target string) string {
+	return fmt.Sprintf("rule %q is shadowed by rule %q for %s", discarded.ID, kept.ID, target)
 }

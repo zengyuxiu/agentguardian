@@ -1,6 +1,10 @@
 package control
 
-import "time"
+import (
+	"time"
+
+	"github.com/zengyuxiu/agentguardian/internal/rules"
+)
 
 type Scope string
 
@@ -20,6 +24,7 @@ type RulesetState struct {
 	CommPolicyCount     int       `json:"comm_policy_count,omitempty"`
 	Generation          uint64    `json:"generation,omitempty"`
 	RequiresProcessSync bool      `json:"requires_process_sync"`
+	Warnings            []string  `json:"warnings,omitempty"`
 	UpdatedAt           time.Time `json:"updated_at,omitempty"`
 	Error               string    `json:"error,omitempty"`
 }
@@ -39,6 +44,17 @@ type ValidateResponse struct {
 }
 
 type ReloadResponse struct {
+	Message   string       `json:"message"`
+	Runtime   RulesetState `json:"runtime"`
+	Permanent RulesetState `json:"permanent"`
+}
+
+type ApplyRuntimeRequest struct {
+	Ruleset rules.Ruleset `json:"ruleset"`
+}
+
+type ApplyResponse struct {
+	Scope     Scope        `json:"scope"`
 	Message   string       `json:"message"`
 	Runtime   RulesetState `json:"runtime"`
 	Permanent RulesetState `json:"permanent"`

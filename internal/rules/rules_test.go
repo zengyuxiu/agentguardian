@@ -181,6 +181,65 @@ func TestValidateRulesetRejectsMultipleSelectors(t *testing.T) {
 	}
 }
 
+func TestValidateRulesetRejectsRelativePath(t *testing.T) {
+	t.Parallel()
+
+	rs := Ruleset{
+		Version: DefaultVersion,
+		Rules: []Rule{
+			{
+				ID: "relative-path",
+				Match: MatchSpec{
+					Path: "tmp/x",
+					Comm: "cat",
+				},
+				Action: ActionSpec{
+					Type: ActionHide,
+				},
+			},
+		},
+	}
+
+	err := ValidateRuleset(rs)
+	if err == nil {
+		t.Fatal("ValidateRuleset() error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "must be an absolute path") {
+		t.Fatalf("ValidateRuleset() error = %v, want absolute path validation", err)
+	}
+}
+
+func TestValidateRulesetRejectsOversizedRewrite(t *testing.T) {
+	t.Parallel()
+
+	long := strings.Repeat("a", agentebpf.MaxTextLen+1)
+	rs := Ruleset{
+		Version: DefaultVersion,
+		Rules: []Rule{
+			{
+				ID: "oversized-rewrite",
+				Match: MatchSpec{
+					Path: "/tmp/x",
+					Comm: "cat",
+				},
+				Action: ActionSpec{
+					Type:    ActionRewrite,
+					Find:    long,
+					Replace: long,
+				},
+			},
+		},
+	}
+
+	err := ValidateRuleset(rs)
+	if err == nil {
+		t.Fatal("ValidateRuleset() error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "at most") {
+		t.Fatalf("ValidateRuleset() error = %v, want max text length validation", err)
+	}
+}
+
 func TestLoadDirRejectsDuplicateIDs(t *testing.T) {
 	t.Parallel()
 
@@ -368,6 +427,85 @@ func TestCompileHideWinsWhenSpecificityAndPriorityMatch(t *testing.T) {
 	policy := compiled.CommPolicies[agentebpf.NewCommKey("cat")]
 	if policy.Action != agentebpf.ActionHide {
 		t.Fatalf("Compile() action = %d, want %d", policy.Action, agentebpf.ActionHide)
+	}
+}
+
+func TestCompileWithReportWarnsWhenExeMatchesNoProcesses(t *testing.T) {
+	t.Parallel()
+
+	rs := Ruleset{
+		Version: DefaultVersion,
+		Rules: []Rule{
+			{
+				ID:      "exe-hide",
+				Enabled: true,
+				Match: MatchSpec{
+					Path: "/tmp/target",
+					Exe:  "/usr/bin/missing",
+				},
+				Action: ActionSpec{
+					Type: ActionHide,
+				},
+			},
+		},
+	}
+
+	compiled, report, err := CompileWithReport(rs, CompileOptions{Processes: []ProcessInfo{}})
+	if err != nil {
+		t.Fatalf("CompileWithReport() error = %v", err)
+	}
+	if len(compiled.PIDPolicies) != 0 {
+		t.Fatalf("CompileWithReport() pid policies = %d, want 0", len(compiled.PIDPolicies))
+	}
+	if len(report.Warnings) != 1 || !strings.Contains(report.Warnings[0], "matched no running processes") {
+		t.Fatalf("CompileWithReport() warnings = %#v, want exe no match warning", report.Warnings)
+	}
+}
+
+func TestCompileWithReportWarnsWhenRuleIsShadowed(t *testing.T) {
+	t.Parallel()
+
+	rs := Ruleset{
+		Version: DefaultVersion,
+		Rules: []Rule{
+			{
+				ID:       "rewrite-cat",
+				Enabled:  true,
+				Priority: 50,
+				Match: MatchSpec{
+					Path: "/tmp/target",
+					Comm: "cat",
+				},
+				Action: ActionSpec{
+					Type:    ActionRewrite,
+					Find:    "secret",
+					Replace: "public",
+				},
+			},
+			{
+				ID:       "hide-cat",
+				Enabled:  true,
+				Priority: 50,
+				Match: MatchSpec{
+					Path: "/tmp/target",
+					Comm: "cat",
+				},
+				Action: ActionSpec{
+					Type: ActionHide,
+				},
+			},
+		},
+	}
+
+	_, report, err := CompileWithReport(rs, CompileOptions{})
+	if err != nil {
+		t.Fatalf("CompileWithReport() error = %v", err)
+	}
+	if len(report.Warnings) == 0 {
+		t.Fatal("CompileWithReport() warnings = nil, want shadow warning")
+	}
+	if !strings.Contains(report.Warnings[0], "shadowed") {
+		t.Fatalf("CompileWithReport() warnings = %#v, want shadow warning", report.Warnings)
 	}
 }
 
