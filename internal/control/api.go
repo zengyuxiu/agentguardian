@@ -60,6 +60,12 @@ type ApplyResponse struct {
 	Permanent RulesetState `json:"permanent"`
 }
 
+type SaveResponse struct {
+	Message   string       `json:"message"`
+	Runtime   RulesetState `json:"runtime"`
+	Permanent RulesetState `json:"permanent"`
+}
+
 type ErrorResponse struct {
 	Error string `json:"error"`
 }

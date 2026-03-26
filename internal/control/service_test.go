@@ -212,6 +212,75 @@ action:
 	}
 }
 
+func TestServiceSaveRuntimePersistsRulesetToPermanent(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	service := NewService(configDir, filepath.Join(configDir, "agentguardd.sock"), 10*time.Millisecond, &fakeApplier{})
+	if err := service.EnsureLayout(); err != nil {
+		t.Fatalf("EnsureLayout() error = %v", err)
+	}
+	defer service.Close()
+
+	_, err := service.ApplyRuntime(rules.Ruleset{
+		Version: 1,
+		Rules: []rules.Rule{
+			{
+				ID: "runtime-hide",
+				Match: rules.MatchSpec{
+					Path: "/tmp/runtime",
+					Comm: "cat",
+				},
+				Action: rules.ActionSpec{
+					Type: rules.ActionHide,
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApplyRuntime() error = %v", err)
+	}
+
+	resp, err := service.SaveRuntime()
+	if err != nil {
+		t.Fatalf("SaveRuntime() error = %v", err)
+	}
+
+	if resp.Permanent.RuleCount != 1 {
+		t.Fatalf("permanent rule count = %d, want 1", resp.Permanent.RuleCount)
+	}
+	if resp.Permanent.Error != "" {
+		t.Fatalf("permanent error = %q, want empty", resp.Permanent.Error)
+	}
+
+	loaded, err := rules.LoadDir(filepath.Join(configDir, "rules.d"))
+	if err != nil {
+		t.Fatalf("LoadDir() error = %v", err)
+	}
+	if len(loaded.Rules) != 1 || loaded.Rules[0].ID != "runtime-hide" {
+		t.Fatalf("LoadDir() rules = %#v, want runtime-hide", loaded.Rules)
+	}
+}
+
+func TestServiceSaveRuntimeFailsWhenRuntimeNotLoaded(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	service := NewService(configDir, filepath.Join(configDir, "agentguardd.sock"), 10*time.Millisecond, &fakeApplier{})
+	if err := service.EnsureLayout(); err != nil {
+		t.Fatalf("EnsureLayout() error = %v", err)
+	}
+	defer service.Close()
+
+	resp, err := service.SaveRuntime()
+	if err == nil {
+		t.Fatal("SaveRuntime() error = nil, want non-nil")
+	}
+	if resp.Message != "save failed" {
+		t.Fatalf("response message = %q, want save failed", resp.Message)
+	}
+}
+
 func writeRuleFile(path string, body string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

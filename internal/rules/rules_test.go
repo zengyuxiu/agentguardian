@@ -287,6 +287,89 @@ func TestLoadDirAllowsEmptyRulesDirectory(t *testing.T) {
 	}
 }
 
+func TestSaveDirRoundTripsRuleset(t *testing.T) {
+	t.Parallel()
+
+	dir := filepath.Join(t.TempDir(), "rules.d")
+	rs := Ruleset{
+		Version: DefaultVersion,
+		Rules: []Rule{
+			{
+				ID: "hide-cat",
+				Match: MatchSpec{
+					Path: "/tmp/secret",
+					Comm: "cat",
+				},
+				Action: ActionSpec{
+					Type: ActionHide,
+				},
+			},
+		},
+	}
+
+	if err := SaveDir(dir, rs); err != nil {
+		t.Fatalf("SaveDir() error = %v", err)
+	}
+
+	savedPath := filepath.Join(dir, GeneratedRulesetFilename)
+	if _, err := os.Stat(savedPath); err != nil {
+		t.Fatalf("saved ruleset file stat error = %v", err)
+	}
+
+	loaded, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir() error = %v", err)
+	}
+	if loaded.Version != rs.Version {
+		t.Fatalf("LoadDir() version = %d, want %d", loaded.Version, rs.Version)
+	}
+	if len(loaded.Rules) != 1 || loaded.Rules[0].ID != "hide-cat" {
+		t.Fatalf("LoadDir() rules = %#v, want single saved rule", loaded.Rules)
+	}
+}
+
+func TestSaveDirReplacesExistingYAMLFiles(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "010-old.yaml"), `
+id: old
+match:
+  path: /tmp/old
+  comm: cat
+action:
+  type: hide
+`)
+
+	rs := Ruleset{
+		Version: DefaultVersion,
+		Rules: []Rule{
+			{
+				ID: "new",
+				Match: MatchSpec{
+					Path: "/tmp/new",
+					Comm: "cat",
+				},
+				Action: ActionSpec{
+					Type: ActionHide,
+				},
+			},
+		},
+	}
+
+	if err := SaveDir(dir, rs); err != nil {
+		t.Fatalf("SaveDir() error = %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != GeneratedRulesetFilename {
+		t.Fatalf("rules.d entries = %#v, want only %q", entries, GeneratedRulesetFilename)
+	}
+}
+
 func TestCompileCommRule(t *testing.T) {
 	t.Parallel()
 

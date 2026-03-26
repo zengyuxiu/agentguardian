@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/zengyuxiu/agentguardian/internal/rules"
 )
 
 type Client struct {
@@ -74,6 +77,38 @@ func (c *Client) Reload(ctx context.Context) (ReloadResponse, error) {
 	var resp ReloadResponse
 	if err := c.do(req, &resp); err != nil {
 		return ReloadResponse{}, err
+	}
+	return resp, nil
+}
+
+func (c *Client) ApplyRuntime(ctx context.Context, rs rules.Ruleset) (ApplyResponse, error) {
+	body, err := json.Marshal(ApplyRuntimeRequest{Ruleset: rs})
+	if err != nil {
+		return ApplyResponse{}, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/runtime/apply", bytes.NewReader(body))
+	if err != nil {
+		return ApplyResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	var resp ApplyResponse
+	if err := c.do(req, &resp); err != nil {
+		return ApplyResponse{}, err
+	}
+	return resp, nil
+}
+
+func (c *Client) SaveRuntime(ctx context.Context) (SaveResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/runtime/save", nil)
+	if err != nil {
+		return SaveResponse{}, err
+	}
+
+	var resp SaveResponse
+	if err := c.do(req, &resp); err != nil {
+		return SaveResponse{}, err
 	}
 	return resp, nil
 }

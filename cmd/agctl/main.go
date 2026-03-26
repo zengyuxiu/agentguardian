@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/zengyuxiu/agentguardian/internal/control"
+	"github.com/zengyuxiu/agentguardian/internal/rules"
 )
 
 func main() {
@@ -52,6 +53,35 @@ func main() {
 			log.Fatal(err)
 		}
 		printJSON(resp)
+	case "apply":
+		applyCmd := flag.NewFlagSet("apply", flag.ExitOnError)
+		runtimeScope := applyCmd.Bool("runtime", false, "apply a complete ruleset to runtime")
+		filePath := applyCmd.String("file", "", "ruleset file or rules.d directory to apply")
+		applyCmd.Parse(args[1:])
+
+		if !*runtimeScope {
+			log.Fatal("apply currently requires --runtime")
+		}
+		if *filePath == "" {
+			log.Fatal("apply requires --file")
+		}
+
+		rs, err := rules.LoadPath(*filePath)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		resp, err := client.ApplyRuntime(ctx, rs)
+		if err != nil {
+			log.Fatal(err)
+		}
+		printJSON(resp)
+	case "save":
+		resp, err := client.SaveRuntime(ctx)
+		if err != nil {
+			log.Fatal(err)
+		}
+		printJSON(resp)
 	default:
 		usage()
 		os.Exit(2)
@@ -70,5 +100,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `Usage:
   agctl [-socket /path/to/agentguardd.sock] status
   agctl [-socket /path/to/agentguardd.sock] validate [-scope permanent|runtime]
-  agctl [-socket /path/to/agentguardd.sock] reload`)
+  agctl [-socket /path/to/agentguardd.sock] reload
+  agctl [-socket /path/to/agentguardd.sock] apply --runtime --file <rules.yaml|rules.d>
+  agctl [-socket /path/to/agentguardd.sock] save`)
 }

@@ -172,6 +172,44 @@ func (s *Service) ApplyRuntime(rs rules.Ruleset) (ApplyResponse, error) {
 	}, nil
 }
 
+func (s *Service) SaveRuntime() (SaveResponse, error) {
+	s.mu.RLock()
+	runtimeState := s.runtimeStateLocked()
+	runtimeRuleset := s.runtimeRuleset
+	runtimeLoaded := s.runtimeLoaded
+	runtimeError := s.runtimeError
+	s.mu.RUnlock()
+
+	if !runtimeLoaded {
+		return SaveResponse{
+			Message:   "save failed",
+			Runtime:   runtimeState,
+			Permanent: s.inspectPermanent(),
+		}, fmt.Errorf("runtime ruleset is not loaded")
+	}
+	if runtimeError != "" {
+		return SaveResponse{
+			Message:   "save failed",
+			Runtime:   runtimeState,
+			Permanent: s.inspectPermanent(),
+		}, fmt.Errorf("runtime ruleset is invalid: %s", runtimeError)
+	}
+
+	if err := rules.SaveDir(s.rulesDir, runtimeRuleset); err != nil {
+		return SaveResponse{
+			Message:   "save failed",
+			Runtime:   runtimeState,
+			Permanent: s.inspectPermanent(),
+		}, err
+	}
+
+	return SaveResponse{
+		Message:   "runtime ruleset saved to permanent",
+		Runtime:   runtimeState,
+		Permanent: s.inspectPermanent(),
+	}, nil
+}
+
 func (s *Service) inspectPermanent() RulesetState {
 	_, _, state, _ := s.loadAndCompilePermanent()
 	return state

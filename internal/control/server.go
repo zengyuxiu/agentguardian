@@ -55,6 +55,52 @@ func NewHandler(service *Service) http.Handler {
 
 		writeJSON(w, http.StatusOK, resp)
 	})
+	mux.HandleFunc("/v1/runtime/apply", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+
+		var req ApplyRuntimeRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+			return
+		}
+
+		resp, err := service.ApplyRuntime(req.Ruleset)
+		if err != nil {
+			writeJSON(w, http.StatusUnprocessableEntity, struct {
+				ErrorResponse
+				ApplyResponse
+			}{
+				ErrorResponse: ErrorResponse{Error: err.Error()},
+				ApplyResponse: resp,
+			})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, resp)
+	})
+	mux.HandleFunc("/v1/runtime/save", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+
+		resp, err := service.SaveRuntime()
+		if err != nil {
+			writeJSON(w, http.StatusUnprocessableEntity, struct {
+				ErrorResponse
+				SaveResponse
+			}{
+				ErrorResponse: ErrorResponse{Error: err.Error()},
+				SaveResponse:  resp,
+			})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, resp)
+	})
 
 	return mux
 }
