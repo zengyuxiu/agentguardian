@@ -74,6 +74,22 @@ func (rt *Runtime) CommPolicyMap() *cebpf.Map {
 	return rt.objects.CommPolicyMap
 }
 
+func (rt *Runtime) SyscallRulesMap() *cebpf.Map {
+	return rt.objects.SyscallRules
+}
+
+func (rt *Runtime) SyscallPIDRulesMap() *cebpf.Map {
+	return rt.objects.SyscallPidRules
+}
+
+func (rt *Runtime) SyscallCommRulesMap() *cebpf.Map {
+	return rt.objects.SyscallCommRules
+}
+
+func (rt *Runtime) ExecPolicyMap() *cebpf.Map {
+	return rt.objects.ExecPolicy
+}
+
 func (rt *Runtime) ReadEvent() (Event, error) {
 	record, err := rt.reader.Read()
 	if err != nil {
@@ -109,6 +125,9 @@ func attachPrograms(objects *agentguardianObjects) ([]link.Link, error) {
 		{"syscalls", "sys_exit_read", objects.HandleReadExit, false},
 		{"syscalls", "sys_enter_close", objects.HandleCloseEnter, false},
 		{"syscalls", "sys_exit_close", objects.HandleCloseExit, false},
+		{"syscalls", "sys_enter_execve", objects.HandleExecveEnter, true},
+		{"syscalls", "sys_enter_execveat", objects.HandleExecveatEnter, true},
+		{"raw_syscalls", "sys_enter", objects.HandleRawSysEnter, true},
 	}
 
 	for _, tp := range tracepoints {
@@ -131,6 +150,14 @@ func attachPrograms(objects *agentguardianObjects) ([]link.Link, error) {
 	}
 
 	links = append(links, lsmLink)
+
+	execLSMLink, err := link.AttachLSM(link.LSMOptions{Program: objects.EnforceExecve})
+	if err != nil {
+		log.Printf("lsm/bprm_check_security unavailable, execve enforcement disabled: %v", err)
+		return links, nil
+	}
+
+	links = append(links, execLSMLink)
 	return links, nil
 }
 

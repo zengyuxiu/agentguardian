@@ -2,12 +2,15 @@ package ebpf
 
 const (
 	ActionPass    = 0
-	ActionHide    = 1
-	ActionRewrite = 2
+	ActionAudit   = 1
+	ActionHide    = 2
+	ActionRewrite = 3
 
 	OpOpen    = 1
 	OpBlock   = 2
 	OpRewrite = 3
+	OpExec    = 4
+	OpSyscall = 5
 
 	MaxPathLen = 64
 	MaxTextLen = 64
@@ -17,6 +20,9 @@ const (
 type Event = agentguardianEvent
 type Policy = agentguardianPolicy
 type CommKey = agentguardianCommKey
+type SyscallRule = agentguardianSyscallRule
+type SyscallPIDKey = agentguardianSyscallPidKey
+type SyscallCommKey = agentguardianSyscallCommKey
 
 func NewPolicy(action uint8, path string, find string, replace string) Policy {
 	var policy Policy
@@ -44,8 +50,24 @@ func NewCommKey(comm string) CommKey {
 	return key
 }
 
+func NewSyscallPIDKey(pid uint32, syscallNR uint32) SyscallPIDKey {
+	return SyscallPIDKey{
+		Pid:       pid,
+		SyscallNr: syscallNR,
+	}
+}
+
+func NewSyscallCommKey(comm string, syscallNR uint32) SyscallCommKey {
+	var key SyscallCommKey
+	copyStringToInt8(key.Comm[:], comm)
+	key.SyscallNr = syscallNR
+	return key
+}
+
 func ActionName(action uint32) string {
 	switch action {
+	case ActionAudit:
+		return "audit"
 	case ActionHide:
 		return "hide"
 	case ActionRewrite:
@@ -63,6 +85,10 @@ func OpName(op uint32) string {
 		return "block"
 	case OpRewrite:
 		return "rewrite"
+	case OpExec:
+		return "exec"
+	case OpSyscall:
+		return "syscall"
 	default:
 		return "unknown"
 	}

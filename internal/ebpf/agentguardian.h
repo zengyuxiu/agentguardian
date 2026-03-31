@@ -7,14 +7,38 @@
 
 enum ag_action {
 	AG_ACTION_PASS = 0,
-	AG_ACTION_HIDE = 1,
-	AG_ACTION_REWRITE = 2,
+	AG_ACTION_AUDIT = 1,
+	AG_ACTION_HIDE = 2,
+	AG_ACTION_REWRITE = 3,
 };
 
 enum ag_operation {
 	AG_OP_OPEN = 1,
 	AG_OP_BLOCK = 2,
 	AG_OP_REWRITE = 3,
+	AG_OP_EXEC = 4,
+	AG_OP_SYSCALL = 5,
+};
+
+enum ag_enforce_mode {
+	AG_ENFORCE_ALLOW = 0,
+	AG_ENFORCE_AUDIT = 1,
+	AG_ENFORCE_DENY = 2,
+};
+
+struct syscall_rule {
+	__u32 syscall_nr;
+	__u32 mode;
+};
+
+struct syscall_pid_key {
+	__u32 pid;
+	__u32 syscall_nr;
+};
+
+struct syscall_comm_key {
+	char comm[AG_TASK_COMM_LEN];
+	__u32 syscall_nr;
 };
 
 struct policy {
@@ -41,6 +65,7 @@ struct event {
 	__u32 action;
 	__u32 op;
 	__s32 ret;
+	__u32 aux;
 	char comm[AG_TASK_COMM_LEN];
 	char path[AG_MAX_PATH_LEN];
 };

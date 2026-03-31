@@ -57,6 +57,23 @@ func main() {
 		}
 	}()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	securityProfile := bpf.DefaultSecurityProfile()
+	if err := bpf.ApplySecurityProfile(runtime.SyscallRulesMap(), runtime.SyscallPIDRulesMap(), runtime.SyscallCommRulesMap(), runtime.ExecPolicyMap(), securityProfile); err != nil {
+		log.Fatalf("installing security profile: %v", err)
+	}
+	go bpf.SyncSecurityProfile(
+		ctx,
+		runtime.SyscallRulesMap(),
+		runtime.SyscallPIDRulesMap(),
+		runtime.SyscallCommRulesMap(),
+		runtime.ExecPolicyMap(),
+		securityProfile,
+		500*time.Millisecond,
+	)
+
 	service := control.NewService(*configDir, *socketPath, *syncInterval, mapApplier{
 		policyMap:     runtime.PolicyMap(),
 		commPolicyMap: runtime.CommPolicyMap(),
@@ -83,12 +100,14 @@ func main() {
 		log.Printf("initial reload failed: %v", err)
 	} else {
 		log.Printf(
-			"agentguardd active: config-dir=%q rules-dir=%q socket=%q generation=%d rules=%d",
+			"agentguardd active: config-dir=%q rules-dir=%q socket=%q generation=%d rules=%d exec-mode=%d syscall-rules=%d",
 			*configDir,
 			resp.Permanent.Path,
 			*socketPath,
 			resp.Runtime.Generation,
 			resp.Runtime.RuleCount,
+			securityProfile.ExecMode,
+			len(securityProfile.Syscalls),
 		)
 	}
 
@@ -114,11 +133,12 @@ func main() {
 		}
 	}
 
+	cancel()
 	service.Close()
 	_ = runtime.StopReading()
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutting down control API: %v", err)
 	}
@@ -136,14 +156,18 @@ func readEvents(runtime *bpf.Runtime) {
 		}
 
 		log.Printf(
-			"op=%s action=%s pid=%d tid=%d ret=%d comm=%s path=%s",
+			"op=%s action=%s pid=%d tid=%d ret=%d aux=%d comm=%s path=%s",
 			bpf.OpName(event.Op),
 			bpf.ActionName(event.Action),
 			event.Pid,
 			event.Tid,
 			event.Ret,
+			event.Aux,
 			bpf.Int8SliceToString(event.Comm[:]),
 			bpf.Int8SliceToString(event.Path[:]),
 		)
+		if event.Op == bpf.OpSyscall {
+			log.Printf("syscall-rule matched: nr=%d name=%s pid=%d comm=%s", event.Aux, bpf.SyscallName(event.Aux), event.Pid, bpf.Int8SliceToString(event.Comm[:]))
+		}
 	}
 }

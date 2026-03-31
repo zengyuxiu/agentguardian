@@ -42,6 +42,11 @@ func main() {
 		}
 	}()
 
+	securityProfile := bpf.DefaultSecurityProfile()
+	if err := bpf.ApplySecurityProfile(runtime.SyscallRulesMap(), runtime.SyscallPIDRulesMap(), runtime.SyscallCommRulesMap(), runtime.ExecPolicyMap(), securityProfile); err != nil {
+		log.Fatalf("installing security profile: %v", err)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -50,6 +55,16 @@ func main() {
 		cancel()
 		_ = runtime.StopReading()
 	}()
+
+	go bpf.SyncSecurityProfile(
+		ctx,
+		runtime.SyscallRulesMap(),
+		runtime.SyscallPIDRulesMap(),
+		runtime.SyscallCommRulesMap(),
+		runtime.ExecPolicyMap(),
+		securityProfile,
+		500*time.Millisecond,
+	)
 
 	if cfg.RulesPath != "" {
 		rs, err := rules.LoadPath(cfg.RulesPath)
@@ -68,12 +83,14 @@ func main() {
 		go rules.SyncCompiledPolicies(ctx, runtime.PolicyMap(), runtime.CommPolicyMap(), rs, 500*time.Millisecond)
 
 		log.Printf(
-			"AgentGuardian active: rules=%q version=%d rule-count=%d pid-policies=%d comm-policies=%d",
+			"AgentGuardian active: rules=%q version=%d rule-count=%d pid-policies=%d comm-policies=%d exec-mode=%d syscall-rules=%d",
 			cfg.RulesPath,
 			rs.Version,
 			len(rs.Rules),
 			len(compiled.PIDPolicies),
 			len(compiled.CommPolicies),
+			securityProfile.ExecMode,
+			len(securityProfile.Syscalls),
 		)
 	} else {
 		if err := config.Apply(runtime.PolicyMap(), runtime.CommPolicyMap(), cfg); err != nil {
@@ -83,7 +100,7 @@ func main() {
 		go config.SyncExecutablePolicies(ctx, runtime.PolicyMap(), cfg)
 
 		log.Printf(
-			"AgentGuardian active: path=%q rewrite-pid=%d hide-pid=%d rewrite-comm=%q hide-comm=%q rewrite-exe=%q hide-exe=%q find=%q replace=%q",
+			"AgentGuardian active: path=%q rewrite-pid=%d hide-pid=%d rewrite-comm=%q hide-comm=%q rewrite-exe=%q hide-exe=%q find=%q replace=%q exec-mode=%d syscall-rules=%d",
 			cfg.TargetPath,
 			cfg.EffectiveRewritePID(),
 			cfg.HidePID,
@@ -93,6 +110,8 @@ func main() {
 			cfg.HideExes,
 			cfg.FindText,
 			cfg.ReplaceText,
+			securityProfile.ExecMode,
+			len(securityProfile.Syscalls),
 		)
 	}
 
@@ -107,14 +126,18 @@ func main() {
 		}
 
 		log.Printf(
-			"op=%s action=%s pid=%d tid=%d ret=%d comm=%s path=%s",
+			"op=%s action=%s pid=%d tid=%d ret=%d aux=%d comm=%s path=%s",
 			bpf.OpName(event.Op),
 			bpf.ActionName(event.Action),
 			event.Pid,
 			event.Tid,
 			event.Ret,
+			event.Aux,
 			bpf.Int8SliceToString(event.Comm[:]),
 			bpf.Int8SliceToString(event.Path[:]),
 		)
+		if event.Op == bpf.OpSyscall {
+			log.Printf("syscall-rule matched: nr=%d name=%s pid=%d comm=%s", event.Aux, bpf.SyscallName(event.Aux), event.Pid, bpf.Int8SliceToString(event.Comm[:]))
+		}
 	}
 }
